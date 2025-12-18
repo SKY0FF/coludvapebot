@@ -174,7 +174,7 @@ async def show_contacts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contacts_text = (
         "<b>📞 Контактная информация</b>\n\n"
         "🏪 Магазин: CloudVape\n"
-        "✈️ Telegram: @vapeshop_support\n"
+        "✈️ Telegram: @CloudVape_152\n"
         "🕒 Часы работы:\n"
         "Пн-Пт: 10:00 - 22:00\n"
         "Сб-Вс: 12:00 - 22:00"
