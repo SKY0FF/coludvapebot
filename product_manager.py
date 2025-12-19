@@ -1,12 +1,11 @@
-# product_manager.py
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+# product_manager.py - ПОЛНЫЙ РАБОЧИЙ КОД
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, CommandHandler, ConversationHandler,
     MessageHandler, filters, CallbackQueryHandler
 )
 from database import db
 import logging
-import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -14,8 +13,9 @@ logger = logging.getLogger(__name__)
 # Состояния для ConversationHandler
 CATEGORY, NAME, PRICE, DESCRIPTION, PHOTO, CONFIRM, EDIT_CHOICE = range(7)
 
-# Глобальные переменные для временного хранения данных
-temp_products = {}
+
+# ==================== ОСНОВНЫЕ ФУНКЦИИ ДОБАВЛЕНИЯ ТОВАРА ====================
+
 
 
 async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33,7 +33,7 @@ async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     categories = db.get_categories()
 
     if not categories:
-        await update.message.reply_text("❌ Нет доступных категорий. Сначала добавьте категории.")
+        await update.message.reply_text("❌ Нет доступных категорий.")
         return ConversationHandler.END
 
     # Создаем клавиатуру с категориями
@@ -50,7 +50,7 @@ async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "📦 <b>Добавление нового товара</b>\n\n"
-        "Выберите категорию товара:",
+        "Выберите категорию:",
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
@@ -69,34 +69,40 @@ async def process_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     category_id = int(query.data.replace('add_cat_', ''))
-    context.user_data['new_product']['category_id'] = category_id
 
-    # Получаем информацию о категории
-    category = db.get_category_by_id(category_id)
-
-    await query.edit_message_text(
-        f"📦 <b>Добавление товара</b>\n\n"
-        f"Категория: <b>{category['name']}</b>\n\n"
-        "📝 Введите название товара:\n"
-        "<i>Пример: HQD Cuvie Plus 2500 тяг</i>",
-        parse_mode='HTML'
-    )
-
-    return NAME
+    # Проверяем, редактируем ли мы или добавляем новый товар
+    if context.user_data.get('edit_field') == 'category':
+        context.user_data['new_product']['category_id'] = category_id
+        # После редактирования возвращаем к подтверждению
+        await confirm_product(update, context)
+        return CONFIRM
+    else:
+        context.user_data['new_product']['category_id'] = category_id
+        await query.edit_message_text(
+            "📝 Введите название товара:\n\n"
+            "<i>Пример: HQD Cuvie Plus 2500 тяг</i>",
+            parse_mode='HTML'
+        )
+        return NAME
 
 
 async def process_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка названия товара"""
     name = update.message.text
-    context.user_data['new_product']['name'] = name
 
-    await update.message.reply_text(
-        "💰 Введите цену товара в рублях (только число):\n\n"
-        "<i>Пример: 1299</i>",
-        parse_mode='HTML'
-    )
-
-    return PRICE
+    if context.user_data.get('edit_field') == 'name':
+        context.user_data['new_product']['name'] = name
+        # После редактирования возвращаем к подтверждению
+        await confirm_product(update, context)
+        return CONFIRM
+    else:
+        context.user_data['new_product']['name'] = name
+        await update.message.reply_text(
+            "💰 Введите цену в рублях (только число):\n\n"
+            "<i>Пример: 1299</i>",
+            parse_mode='HTML'
+        )
+        return PRICE
 
 
 async def process_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,20 +112,23 @@ async def process_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if price <= 0:
             raise ValueError
 
-        context.user_data['new_product']['price'] = price
-
-        await update.message.reply_text(
-            "📋 Введите описание товара:\n\n"
-            "<i>Пример: 2500 тяг, 15 вкусов, тип: одноразовый, никотин: 20мг/мл</i>\n\n"
-            "<i>Или отправьте /skip чтобы пропустить</i>",
-            parse_mode='HTML'
-        )
-
-        return DESCRIPTION
+        if context.user_data.get('edit_field') == 'price':
+            context.user_data['new_product']['price'] = price
+            await confirm_product(update, context)
+            return CONFIRM
+        else:
+            context.user_data['new_product']['price'] = price
+            await update.message.reply_text(
+                "📋 Введите описание товара:\n\n"
+                "<i>Пример: 2500 тяг, 15 вкусов, тип: одноразовый</i>\n\n"
+                "Или отправьте /skip чтобы пропустить",
+                parse_mode='HTML'
+            )
+            return DESCRIPTION
 
     except ValueError:
         await update.message.reply_text(
-            "❌ Пожалуйста, введите корректную цену (целое число больше 0):",
+            "❌ Некорректная цена! Введите целое число больше 0:",
             parse_mode='HTML'
         )
         return PRICE
@@ -128,169 +137,250 @@ async def process_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка описания товара"""
     description = update.message.text
-    context.user_data['new_product']['description'] = description
 
-    await update.message.reply_text(
-        "📸 <b>Добавление фотографии товара</b>\n\n"
-        "Отправьте фотографию товара.\n\n"
-        "<i>Или отправьте /skip чтобы пропустить добавление фото</i>",
-        parse_mode='HTML'
-    )
-
-    return PHOTO
+    if context.user_data.get('edit_field') == 'description':
+        context.user_data['new_product']['description'] = description
+        await confirm_product(update, context)
+        return CONFIRM
+    else:
+        context.user_data['new_product']['description'] = description
+        await update.message.reply_text(
+            "📸 Отправьте фото товара:\n\n"
+            "Или отправьте /skip чтобы пропустить",
+            parse_mode='HTML'
+        )
+        return PHOTO
 
 
 async def skip_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пропуск описания"""
     context.user_data['new_product']['description'] = ""
 
-    await update.message.reply_text(
-        "📸 <b>Добавление фотографии товара</b>\n\n"
-        "Отправьте фотографию товара.\n\n"
-        "<i>Или отправьте /skip чтобы пропустить добавление фото</i>",
-        parse_mode='HTML'
-    )
-
-    return PHOTO
+    if context.user_data.get('edit_field') == 'description':
+        await confirm_product(update, context)
+        return CONFIRM
+    else:
+        await update.message.reply_text(
+            "📸 Отправьте фото товара:\n\n"
+            "Или отправьте /skip чтобы пропустить",
+            parse_mode='HTML'
+        )
+        return PHOTO
 
 
 async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка фотографии товара"""
     if update.message.photo:
-        # Берем последнее (самое большое) фото
         photo = update.message.photo[-1]
         context.user_data['new_product']['photo_id'] = photo.file_id
 
+    if context.user_data.get('edit_field') == 'photo':
         await confirm_product(update, context)
         return CONFIRM
     else:
-        await update.message.reply_text("❌ Пожалуйста, отправьте фотографию или используйте /skip")
-        return PHOTO
+        await confirm_product(update, context)
+        return CONFIRM
 
 
 async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пропуск добавления фото"""
+    """Пропуск фото"""
     context.user_data['new_product']['photo_id'] = None
 
-    await confirm_product(update, context)
-    return CONFIRM
+    if context.user_data.get('edit_field') == 'photo':
+        await confirm_product(update, context)
+        return CONFIRM
+    else:
+        await confirm_product(update, context)
+        return CONFIRM
 
 
 async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение добавления товара"""
+    """Показ информации о товаре и предложение редактирования"""
     product_data = context.user_data['new_product']
 
-    # Получаем название категории
-    category = db.get_category_by_id(product_data['category_id'])
+    # Получаем название категории - ИСПРАВЛЕННАЯ СТРОКА
+    category_name = db.get_category_name(product_data['category_id'])  # Изменено!
 
-    # Формируем сообщение с информацией о товаре
+    # Формируем сообщение
     text = (
-        f"✅ <b>Подтвердите добавление товара</b>\n\n"
-        f"<b>Категория:</b> {category['name']}\n"
+        f"📦 <b>Информация о товаре</b>\n\n"
+        f"<b>Категория:</b> {category_name}\n"  # Изменено!
         f"<b>Название:</b> {product_data['name']}\n"
         f"<b>Цена:</b> {product_data['price']}₽\n"
         f"<b>Описание:</b> {product_data.get('description', 'Нет описания')}\n"
-        f"<b>Фото:</b> {'Есть' if product_data.get('photo_id') else 'Нет'}\n\n"
-        "<i>Всё верно?</i>"
+        f"<b>Фото:</b> {'✅ Есть' if product_data.get('photo_id') else '❌ Нет'}\n\n"
     )
 
-    # Создаем клавиатуру подтверждения
-    keyboard = [
-        [InlineKeyboardButton("✅ Да, добавить", callback_data="confirm_yes")],
-        [InlineKeyboardButton("✏️ Редактировать", callback_data="edit_product")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="confirm_no")],
-    ]
+    # Если это редактирование, убираем флаг редактирования
+    if 'edit_field' in context.user_data:
+        del context.user_data['edit_field']
+        text += "✅ <b>Изменения сохранены!</b>\n\n"
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    text += (
+        "<b>Что дальше?</b>\n\n"
+        "Отправьте:\n"
+        "• <code>save</code> - сохранить товар\n"
+        "• <code>edit</code> - редактировать\n"
+        "• <code>cancel</code> - отменить\n\n"
+        "Или команду /cancel"
+    )
 
-    # Если есть фото, отправляем его с подписью
-    if product_data.get('photo_id'):
-        await update.message.reply_photo(
-            photo=product_data['photo_id'],
-            caption=text,
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-
+    await update.message.reply_text(text, parse_mode='HTML')
     return CONFIRM
 
 
-async def save_product_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение товара в базу данных"""
-    query = update.callback_query
-    await query.answer()
+async def save_product_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Финальное сохранение товара в БД"""
+    user_input = update.message.text.strip().lower()
 
-    if query.data == 'confirm_yes':
+    if user_input == 'save':
         product_data = context.user_data['new_product']
 
-        # Сохраняем товар в БД
-        product_id = db.add_product(
-            category_id=product_data['category_id'],
-            name=product_data['name'],
-            price=product_data['price'],
-            description=product_data.get('description', ''),
-            photo_id=product_data.get('photo_id'),
-            stock=product_data.get('stock', 0)
+        # ОТЛАДКА: выводим что пытаемся сохранить
+        logger.info(f"Пытаемся сохранить товар: {product_data}")
+
+        try:
+            # ПОМЕНЯЙТЕ ЗДЕСЬ: добавление товара должно использовать category_id, а не category
+            category_name = db.get_category_name(product_data['category_id'])  # Получаем имя категории
+
+            product_id = db.add_product(
+                category=category_name,  # Передаем имя категории, а не ID
+                name=product_data['name'],
+                price=product_data['price'],
+                description=product_data.get('description', ''),
+                photo_id=product_data.get('photo_id')
+            )
+
+            logger.info(f"Результат сохранения: ID = {product_id}")
+
+            if product_id and product_id > 0:
+                await update.message.reply_text(
+                    f"✅ <b>Товар успешно сохранен!</b>\n\n"
+                    f"<b>ID:</b> <code>{product_id}</code>\n"
+                    f"<b>Название:</b> {product_data['name']}\n"
+                    f"<b>Цена:</b> {product_data['price']}₽\n"
+                    f"<b>Категория:</b> {category_name}\n\n"
+                    f"Добавить еще товар: /add_product",
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ <b>Ошибка при сохранении!</b>\n"
+                    "ID товара не был возвращен.\n\n"
+                    "Попробуйте еще раз: /add_product",
+                    parse_mode='HTML'
+                )
+
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении товара: {e}")
+            await update.message.reply_text(
+                f"❌ <b>Критическая ошибка!</b>\n\n"
+                f"Ошибка: {str(e)}\n\n"
+                "Попробуйте еще раз: /add_product",
+                parse_mode='HTML'
+            )
+
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # ... остальной код функции остается без изменений ...
+
+    elif user_input == 'edit':
+        await update.message.reply_text(
+            "✏️ <b>Что вы хотите отредактировать?</b>\n\n"
+            "Отправьте номер:\n"
+            "1. 📝 Название\n"
+            "2. 💰 Цена\n"
+            "3. 📋 Описание\n"
+            "4. 📸 Фото\n"
+            "5. 📦 Категория\n\n"
+            "Или /cancel для отмены"
         )
+        return EDIT_CHOICE
 
-        if product_id:
-            await query.edit_message_text(
-                f"✅ <b>Товар успешно добавлен!</b>\n\n"
-                f"ID товара: <code>{product_id}</code>\n"
-                f"Название: {product_data['name']}\n"
-                f"Цена: {product_data['price']}₽\n\n"
-                f"<i>Товар сохранен в базе данных и доступен пользователям.</i>",
-                parse_mode='HTML'
-            )
-        else:
-            await query.edit_message_text(
-                "❌ <b>Ошибка при сохранении товара!</b>\n\n"
-                "<i>Попробуйте еще раз или обратитесь к администратору.</i>",
-                parse_mode='HTML'
-            )
-
-        # Очищаем временные данные
+    elif user_input == 'cancel':
+        await update.message.reply_text("❌ Добавление товара отменено.")
         context.user_data.clear()
         return ConversationHandler.END
 
-    elif query.data == 'confirm_no':
-        await query.edit_message_text("❌ Добавление товара отменено.")
-        context.user_data.clear()
-        return ConversationHandler.END
+    else:
+        await update.message.reply_text(
+            "❌ Не понял команду. Отправьте:\n"
+            "• <code>save</code> - сохранить\n"
+            "• <code>edit</code> - редактировать\n"
+            "• <code>cancel</code> - отменить"
+        )
+        return CONFIRM
 
-    elif query.data == 'edit_product':
-        await show_edit_options(update, context)
+
+async def process_edit_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора что редактировать (текстовый ввод)"""
+    choice = update.message.text.strip()
+
+    if choice == '1':
+        await update.message.reply_text("✏️ Введите новое название товара:")
+        context.user_data['edit_field'] = 'name'
+        return NAME
+    elif choice == '2':
+        await update.message.reply_text("💰 Введите новую цену:")
+        context.user_data['edit_field'] = 'price'
+        return PRICE
+    elif choice == '3':
+        await update.message.reply_text("📋 Введите новое описание:")
+        context.user_data['edit_field'] = 'description'
+        return DESCRIPTION
+    elif choice == '4':
+        await update.message.reply_text("📸 Отправьте новое фото:")
+        context.user_data['edit_field'] = 'photo'
+        return PHOTO
+    elif choice == '5':
+        await update.message.reply_text("📦 Выберите новую категорию:")
+        context.user_data['edit_field'] = 'category'
+        return CATEGORY
+    else:
+        await update.message.reply_text(
+            "❌ Неверный выбор! Отправьте номер от 1 до 5:\n\n"
+            "1. 📝 Название\n"
+            "2. 💰 Цена\n"
+            "3. 📋 Описание\n"
+            "4. 📸 Фото\n"
+            "5. 📦 Категория\n\n"
+            "Или отправьте /cancel для отмены"
+        )
         return EDIT_CHOICE
 
 
-async def show_edit_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать опции редактирования"""
-    query = update.callback_query
-    await query.answer()
+async def cancel_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена добавления товара"""
+    await update.message.reply_text("❌ Добавление товара отменено.")
+    context.user_data.clear()
+    return ConversationHandler.END
 
-    keyboard = [
-        [InlineKeyboardButton("📝 Название", callback_data="edit_name")],
-        [InlineKeyboardButton("💰 Цена", callback_data="edit_price")],
-        [InlineKeyboardButton("📋 Описание", callback_data="edit_description")],
-        [InlineKeyboardButton("📸 Фото", callback_data="edit_photo")],
-        [InlineKeyboardButton("📦 Категория", callback_data="edit_category")],
-        [InlineKeyboardButton("✅ Всё верно, сохранить", callback_data="confirm_yes")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="confirm_no")],
-    ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+# ==================== ConversationHandler для добавления товара ====================
 
-    await query.edit_message_text(
-        "✏️ <b>Что вы хотите отредактировать?</b>",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
+add_product_conversation = ConversationHandler(
+    entry_points=[CommandHandler('add_product', start_add_product)],
+    states={
+        CATEGORY: [CallbackQueryHandler(process_category, pattern='^(add_cat_|cancel_add)')],
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_name)],
+        PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_price)],
+        DESCRIPTION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, process_description),
+            CommandHandler('skip', skip_description),
+        ],
+        PHOTO: [
+            MessageHandler(filters.PHOTO, process_photo),
+            CommandHandler('skip', skip_photo),
+        ],
+        CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_product_final)],
+        EDIT_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_choice)],
+    },
+    fallbacks=[
+        CommandHandler('cancel', cancel_add),
+    ],
+    per_message=False,
+)
 
 
 # ==================== УДАЛЕНИЕ ТОВАРОВ ====================
@@ -348,7 +438,7 @@ async def delete_product_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Неверный формат ID. Используйте: /delete_product [ID_товара]")
 
 
-async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, product: Dict = None):
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, product: dict = None):
     """Подтверждение удаления товара"""
     if not product and update.callback_query:
         query = update.callback_query
@@ -510,29 +600,3 @@ async def search_product_command(update: Update, context: ContextTypes.DEFAULT_T
         text += f"\n<i>Показано 10 из {len(products)} результатов</i>"
 
     await update.message.reply_text(text, parse_mode='HTML')
-
-
-# ==================== ConversationHandler ДЛЯ ДОБАВЛЕНИЯ ТОВАРА ====================
-
-add_product_conversation = ConversationHandler(
-    entry_points=[CommandHandler('add_product', start_add_product)],
-    states={
-        CATEGORY: [CallbackQueryHandler(process_category, pattern='^(add_cat_|cancel_add)')],
-        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_name)],
-        PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_price)],
-        DESCRIPTION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, process_description),
-            CommandHandler('skip', skip_description),
-        ],
-        PHOTO: [
-            MessageHandler(filters.PHOTO, process_photo),
-            CommandHandler('skip', skip_photo),
-        ],
-        CONFIRM: [CallbackQueryHandler(save_product_to_db, pattern='^(confirm_yes|confirm_no|edit_product)')],
-        EDIT_CHOICE: [CallbackQueryHandler(save_product_to_db, pattern='^(confirm_yes|confirm_no)')],
-    },
-    fallbacks=[
-        CommandHandler('cancel', lambda u, c: ConversationHandler.END),
-        CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern='^cancel_'),
-    ],
-)
