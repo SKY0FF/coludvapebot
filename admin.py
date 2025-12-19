@@ -148,36 +148,43 @@ add_product_handler = ConversationHandler(
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Панель администратора"""
     user_id = update.effective_user.id
-    
+
     if not db.is_admin(user_id):
         await update.message.reply_text("⛔ У вас нет прав администратора!")
         return
-    
+
     user_count = db.get_user_count()
     active_count = db.get_active_user_count()
-    
+    product_count = db.get_products_count()
+
     text = (
         f"⚙️ <b>Панель администратора VapeShop</b>\n\n"
         f"📊 <b>Статистика:</b>\n"
-        f"• Всего пользователей: {user_count}\n"
-        f"• Активных (с уведомлениями): {active_count}\n\n"
-        "<b>Команды управления:</b>\n"
+        f"• Пользователей: {user_count}\n"
+        f"• Активных: {active_count}\n"
+        f"• Товаров: {product_count}\n\n"
+        "<b>📦 Управление товарами:</b>\n"
         "/add_product - Добавить товар\n"
-        "/stats - Подробная статистика\n"
-        "<b>/broadcast - Рассылка сообщения</b>\n"
-        "/broadcast_history - История рассылок\n"
-        "/make_admin [ID] - Назначить админом\n"
-        "/user_info [ID] - Инфо о пользователе\n\n"
-        "<b>Быстрые действия:</b>"
+        "/delete_product - Удалить товар\n"
+        "/list_products - Список всех товаров\n"
+        "/search_product [текст] - Поиск товара\n\n"
+        "<b>📢 Рассылка:</b>\n"
+        "/broadcast - Рассылка сообщения\n"
+        "/broadcast_history - История рассылок\n\n"
+        "<b>👥 Управление пользователями:</b>\n"
+        "/user_info [ID] - Информация о пользователе\n"
+        "/make_admin [ID] - Назначить админом\n\n"
+        "<b>📊 Статистика:</b>\n"
+        "/stats - Подробная статистика"
     )
-    
+
     keyboard = [
-        [InlineKeyboardButton("📢 Рассылка всем", callback_data='admin_broadcast_all')],
+        [InlineKeyboardButton("📦 Добавить товар", callback_data='admin_add_product')],
+        [InlineKeyboardButton("🗑️ Удалить товар", callback_data='admin_delete_product')],
+        [InlineKeyboardButton("📢 Рассылка", callback_data='admin_broadcast_all')],
         [InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')],
-        [InlineKeyboardButton("👥 Управление пользователями", callback_data='admin_users')],
-        [InlineKeyboardButton("➕ Добавить товар", callback_data='admin_add_product')],
     ]
-    
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 

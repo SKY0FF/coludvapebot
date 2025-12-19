@@ -1,251 +1,366 @@
-# database.py
+# database.py - ДОПОЛНЯЕМ МЕТОДЫ ДЛЯ ТОВАРОВ
 import sqlite3
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
+import json
 
 logger = logging.getLogger(__name__)
+
 
 class Database:
     def __init__(self, db_name: str = 'vapeshop.db'):
         self.db_name = db_name
         self.conn = sqlite3.connect(db_name, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row  # Для доступа к колонкам по имени
+        self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
         self.create_tables()
         logger.info(f"База данных {db_name} подключена")
 
     def create_tables(self):
         """Создание всех необходимых таблиц"""
-        # Таблица пользователей
+        # Таблица пользователей (уже есть)
         self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER UNIQUE NOT NULL,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                language_code TEXT,
-                is_bot BOOLEAN DEFAULT 0,
-                is_admin BOOLEAN DEFAULT 0,
-                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notifications_enabled BOOLEAN DEFAULT 1
-            )
-        ''')
+                            CREATE TABLE IF NOT EXISTS users
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY
+                                AUTOINCREMENT,
+                                user_id
+                                INTEGER
+                                UNIQUE
+                                NOT
+                                NULL,
+                                username
+                                TEXT,
+                                first_name
+                                TEXT,
+                                last_name
+                                TEXT,
+                                language_code
+                                TEXT,
+                                is_bot
+                                BOOLEAN
+                                DEFAULT
+                                0,
+                                is_admin
+                                BOOLEAN
+                                DEFAULT
+                                0,
+                                join_date
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP,
+                                last_activity
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP,
+                                notifications_enabled
+                                BOOLEAN
+                                DEFAULT
+                                1
+                            )
+                            ''')
 
-        # Таблица товаров
+        # Таблица категорий товаров
         self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                name TEXT NOT NULL,
-                price INTEGER NOT NULL,
-                description TEXT,
-                image_url TEXT,
-                is_active BOOLEAN DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+                            CREATE TABLE IF NOT EXISTS categories
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY
+                                AUTOINCREMENT,
+                                name
+                                TEXT
+                                NOT
+                                NULL
+                                UNIQUE,
+                                description
+                                TEXT,
+                                is_active
+                                BOOLEAN
+                                DEFAULT
+                                1,
+                                created_at
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP
+                            )
+                            ''')
 
-        # Таблица сообщений для рассылки
+        # Таблица товаров (обновленная с photo_id)
         self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS broadcast_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                admin_id INTEGER NOT NULL,
-                message_text TEXT NOT NULL,
-                message_type TEXT DEFAULT 'text',
-                total_users INTEGER DEFAULT 0,
-                sent_count INTEGER DEFAULT 0,
-                failed_count INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                sent_at TIMESTAMP
-            )
-        ''')
+                            CREATE TABLE IF NOT EXISTS products
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY
+                                AUTOINCREMENT,
+                                category_id
+                                INTEGER
+                                NOT
+                                NULL,
+                                name
+                                TEXT
+                                NOT
+                                NULL,
+                                price
+                                INTEGER
+                                NOT
+                                NULL,
+                                description
+                                TEXT,
+                                photo_id
+                                TEXT, -- ID фотографии в Telegram
+                                stock
+                                INTEGER
+                                DEFAULT
+                                0,
+                                is_active
+                                BOOLEAN
+                                DEFAULT
+                                1,
+                                created_at
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP,
+                                updated_at
+                                TIMESTAMP
+                                DEFAULT
+                                CURRENT_TIMESTAMP,
+                                FOREIGN
+                                KEY
+                            (
+                                category_id
+                            ) REFERENCES categories
+                            (
+                                id
+                            )
+                                )
+                            ''')
+
+        # Добавляем категории по умолчанию
+        default_categories = [
+            ('POD-системы', 'Одноразовые и многоразовые POD-системы'),
+            ('Жидкости', 'Жидкости для заправки'),
+            ('Испарители', 'Сменные испарители и атомайзеры'),
+            ('Аксессуары', 'Аксессуары для вейпинга'),
+            ('Комплектующие', 'Запчасти и комплектующие')
+        ]
+
+        for category_name, description in default_categories:
+            self.cursor.execute('''
+                                INSERT
+                                OR IGNORE INTO categories (name, description) 
+                VALUES (?, ?)
+                                ''', (category_name, description))
 
         self.conn.commit()
         logger.info("Таблицы созданы/проверены")
 
-    # === МЕТОДЫ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ===
+    # ==================== МЕТОДЫ ДЛЯ КАТЕГОРИЙ ====================
 
-    def add_or_update_user(self, user_data: Dict):
-        """Добавление или обновление пользователя"""
+    def get_categories(self) -> List[Dict]:
+        """Получение всех категорий"""
         try:
-            self.cursor.execute('''
-                INSERT INTO users 
-                (user_id, username, first_name, last_name, language_code, is_bot, last_activity)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                username = excluded.username,
-                first_name = excluded.first_name,
-                last_name = excluded.last_name,
-                last_activity = excluded.last_activity
-            ''', (
-                user_data['id'],
-                user_data.get('username'),
-                user_data.get('first_name'),
-                user_data.get('last_name'),
-                user_data.get('language_code'),
-                user_data.get('is_bot', False),
-                datetime.now()
-            ))
-            self.conn.commit()
-            logger.debug(f"Пользователь {user_data['id']} обновлен")
-            return True
+            self.cursor.execute("SELECT * FROM categories WHERE is_active = 1 ORDER BY name")
+            return [dict(row) for row in self.cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Ошибка при добавлении пользователя: {e}")
-            return False
-
-    def get_all_users(self, active_only: bool = True) -> List[Dict]:
-        """Получение всех пользователей"""
-        try:
-            query = "SELECT * FROM users"
-            if active_only:
-                query += " WHERE notifications_enabled = 1"
-            
-            self.cursor.execute(query)
-            users = [dict(row) for row in self.cursor.fetchall()]
-            return users
-        except Exception as e:
-            logger.error(f"Ошибка при получении пользователей: {e}")
+            logger.error(f"Ошибка при получении категорий: {e}")
             return []
 
-    def get_user_count(self) -> int:
-        """Получение количества пользователей"""
+    def get_category_by_id(self, category_id: int) -> Optional[Dict]:
+        """Получение категории по ID"""
         try:
-            self.cursor.execute("SELECT COUNT(*) as count FROM users")
-            result = self.cursor.fetchone()
-            return result['count'] if result else 0
+            self.cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
+            row = self.cursor.fetchone()
+            return dict(row) if row else None
         except Exception as e:
-            logger.error(f"Ошибка при подсчете пользователей: {e}")
-            return 0
+            logger.error(f"Ошибка при получении категории: {e}")
+            return None
 
-    def get_active_user_count(self) -> int:
-        """Получение количества активных пользователей (с включенными уведомлениями)"""
-        try:
-            self.cursor.execute("SELECT COUNT(*) as count FROM users WHERE notifications_enabled = 1")
-            result = self.cursor.fetchone()
-            return result['count'] if result else 0
-        except Exception as e:
-            logger.error(f"Ошибка при подсчете активных пользователей: {e}")
-            return 0
-
-    def disable_user_notifications(self, user_id: int) -> bool:
-        """Отключение уведомлений для пользователя"""
-        try:
-            self.cursor.execute(
-                "UPDATE users SET notifications_enabled = 0 WHERE user_id = ?",
-                (user_id,)
-            )
-            self.conn.commit()
-            return self.cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Ошибка при отключении уведомлений: {e}")
-            return False
-
-    def enable_user_notifications(self, user_id: int) -> bool:
-        """Включение уведомлений для пользователя"""
-        try:
-            self.cursor.execute(
-                "UPDATE users SET notifications_enabled = 1 WHERE user_id = ?",
-                (user_id,)
-            )
-            self.conn.commit()
-            return self.cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Ошибка при включении уведомлений: {e}")
-            return False
-
-    # === МЕТОДЫ ДЛЯ РАБОТЫ С РАССЫЛКОЙ ===
-
-    def save_broadcast_message(self, admin_id: int, message_text: str, total_users: int) -> int:
-        """Сохранение информации о рассылке"""
+    def add_category(self, name: str, description: str = "") -> int:
+        """Добавление новой категории"""
         try:
             self.cursor.execute('''
-                INSERT INTO broadcast_messages 
-                (admin_id, message_text, total_users, status)
-                VALUES (?, ?, ?, ?)
-            ''', (admin_id, message_text, total_users, 'pending'))
+                                INSERT INTO categories (name, description)
+                                VALUES (?, ?)
+                                ''', (name, description))
             self.conn.commit()
             return self.cursor.lastrowid
         except Exception as e:
-            logger.error(f"Ошибка при сохранении рассылки: {e}")
+            logger.error(f"Ошибка при добавлении категории: {e}")
             return 0
 
-    def update_broadcast_status(self, broadcast_id: int, sent: int = 0, failed: int = 0, status: str = 'completed'):
-        """Обновление статуса рассылки"""
-        try:
-            self.cursor.execute('''
-                UPDATE broadcast_messages 
-                SET sent_count = sent_count + ?, 
-                    failed_count = failed_count + ?,
-                    status = ?,
-                    sent_at = CASE WHEN status = 'pending' THEN CURRENT_TIMESTAMP ELSE sent_at END
-                WHERE id = ?
-            ''', (sent, failed, status, broadcast_id))
-            self.conn.commit()
-        except Exception as e:
-            logger.error(f"Ошибка при обновлении статуса рассылки: {e}")
+    # ==================== МЕТОДЫ ДЛЯ ТОВАРОВ ====================
 
-    def get_broadcast_history(self, limit: int = 10) -> List[Dict]:
-        """Получение истории рассылок"""
+    def add_product(self, category_id: int, name: str, price: int,
+                    description: str = "", photo_id: str = None, stock: int = 0) -> int:
+        """Добавление нового товара"""
         try:
             self.cursor.execute('''
-                SELECT * FROM broadcast_messages 
-                ORDER BY created_at DESC 
-                LIMIT ?
-            ''', (limit,))
+                                INSERT INTO products
+                                    (category_id, name, price, description, photo_id, stock)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (category_id, name, price, description, photo_id, stock))
+            self.conn.commit()
+            product_id = self.cursor.lastrowid
+            logger.info(f"Товар '{name}' добавлен с ID {product_id}")
+            return product_id
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении товара: {e}")
+            return 0
+
+    def update_product(self, product_id: int, **kwargs) -> bool:
+        """Обновление информации о товаре"""
+        try:
+            if not kwargs:
+                return False
+
+            set_clause = ', '.join([f"{key} = ?" for key in kwargs.keys()])
+            values = list(kwargs.values())
+            values.append(product_id)
+
+            self.cursor.execute(f'''
+                UPDATE products 
+                SET {set_clause}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', values)
+            self.conn.commit()
+            return self.cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении товара: {e}")
+            return False
+
+    def delete_product(self, product_id: int) -> bool:
+        """Удаление товара (мягкое удаление)"""
+        try:
+            self.cursor.execute('''
+                                UPDATE products
+                                SET is_active  = 0,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                ''', (product_id,))
+            self.conn.commit()
+            return self.cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка при удалении товара: {e}")
+            return False
+
+    def get_product_by_id(self, product_id: int) -> Optional[Dict]:
+        """Получение товара по ID"""
+        try:
+            self.cursor.execute('''
+                                SELECT p.*, c.name as category_name
+                                FROM products p
+                                         JOIN categories c ON p.category_id = c.id
+                                WHERE p.id = ?
+                                  AND p.is_active = 1
+                                ''', (product_id,))
+            row = self.cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Ошибка при получении товара: {e}")
+            return None
+
+    def get_products_by_category(self, category_id: int) -> List[Dict]:
+        """Получение товаров по категории"""
+        try:
+            self.cursor.execute('''
+                                SELECT p.*, c.name as category_name
+                                FROM products p
+                                         JOIN categories c ON p.category_id = c.id
+                                WHERE p.category_id = ?
+                                  AND p.is_active = 1
+                                ORDER BY p.name
+                                ''', (category_id,))
             return [dict(row) for row in self.cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Ошибка при получении истории рассылок: {e}")
+            logger.error(f"Ошибка при получении товаров: {e}")
             return []
 
-    # === МЕТОДЫ ДЛЯ АДМИНИСТРАТОРОВ ===
+    def get_all_products(self, active_only: bool = True) -> List[Dict]:
+        """Получение всех товаров"""
+        try:
+            query = '''
+                    SELECT p.*, c.name as category_name
+                    FROM products p
+                             JOIN categories c ON p.category_id = c.id \
+                    '''
+            if active_only:
+                query += " WHERE p.is_active = 1"
+            query += " ORDER BY p.category_id, p.name"
 
-    def add_admin(self, user_id: int) -> bool:
-        """Добавление администратора"""
+            self.cursor.execute(query)
+            return [dict(row) for row in self.cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка при получении всех товаров: {e}")
+            return []
+
+    def search_products(self, query: str) -> List[Dict]:
+        """Поиск товаров по названию"""
         try:
             self.cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, is_admin)
-                VALUES (?, 1)
-                ON CONFLICT(user_id) DO UPDATE SET is_admin = 1
-            ''', (user_id,))
-            self.conn.commit()
-            return True
+                                SELECT p.*, c.name as category_name
+                                FROM products p
+                                         JOIN categories c ON p.category_id = c.id
+                                WHERE p.is_active = 1
+                                  AND p.name LIKE ?
+                                ORDER BY p.name
+                                ''', (f"%{query}%",))
+            return [dict(row) for row in self.cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Ошибка при добавлении администратора: {e}")
-            return False
-
-    def is_admin(self, user_id: int) -> bool:
-        """Проверка, является ли пользователь администратором"""
-        try:
-            self.cursor.execute(
-                "SELECT is_admin FROM users WHERE user_id = ?",
-                (user_id,)
-            )
-            result = self.cursor.fetchone()
-            return result['is_admin'] == 1 if result else False
-        except Exception as e:
-            logger.error(f"Ошибка при проверке администратора: {e}")
-            return False
-
-    def get_admins(self) -> List[int]:
-        """Получение списка администраторов"""
-        try:
-            self.cursor.execute("SELECT user_id FROM users WHERE is_admin = 1")
-            return [row['user_id'] for row in self.cursor.fetchall()]
-        except Exception as e:
-            logger.error(f"Ошибка при получении администраторов: {e}")
+            logger.error(f"Ошибка при поиске товаров: {e}")
             return []
 
-    # === ЗАКРЫТИЕ СОЕДИНЕНИЯ ===
+    def get_products_count(self) -> int:
+        """Получение количества товаров"""
+        try:
+            self.cursor.execute("SELECT COUNT(*) as count FROM products WHERE is_active = 1")
+            result = self.cursor.fetchone()
+            return result['count'] if result else 0
+        except Exception as e:
+            logger.error(f"Ошибка при подсчете товаров: {e}")
+            return 0
 
-    def close(self):
-        """Закрытие соединения с базой данных"""
-        self.conn.close()
-        logger.info("Соединение с базой данных закрыто")
+    # ==================== МЕТОДЫ ДЛЯ ФОТОГРАФИЙ ====================
+
+    def save_product_photo(self, product_id: int, photo_id: str) -> bool:
+        """Сохранение ID фотографии для товара"""
+        try:
+            self.cursor.execute('''
+                                UPDATE products
+                                SET photo_id   = ?,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                                ''', (photo_id, product_id))
+            self.conn.commit()
+            return self.cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении фото: {e}")
+            return False
+
+    def get_product_with_photo(self, product_id: int) -> Optional[Dict]:
+        """Получение товара с фото"""
+        try:
+            self.cursor.execute('''
+                                SELECT p.*, c.name as category_name
+                                FROM products p
+                                         JOIN categories c ON p.category_id = c.id
+                                WHERE p.id = ?
+                                  AND p.is_active = 1
+                                  AND p.photo_id IS NOT NULL
+                                ''', (product_id,))
+            row = self.cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Ошибка при получении товара с фото: {e}")
+            return None
+
 
 # Создаем глобальный экземпляр базы данных
 db = Database()
